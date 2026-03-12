@@ -93,16 +93,6 @@ def _theme_prefix_csv_path() -> Path:
     return Path(__file__).resolve().parent / path
 
 
-# async def _get_json(url: str) -> dict[str, Any]:
-#     async with httpx.AsyncClient(timeout=60.0) as client:
-#         if '/data/' in url:
-#             json_header = "application/vnd.sdmx.data+json;"
-#         else:
-#             json_header = "application/vnd.sdmx.structure+json;"
-#         r = await client.get(url, headers={"User-Agent": USER_AGENT, "Accept": json_header})
-#         r.raise_for_status()
-#         return r.json()
-
 async def _get_json(url: str) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         headers = {"User-Agent": USER_AGENT}
@@ -550,6 +540,19 @@ async def _data_path_for_query(flow_ref: str) -> str:
     return quote(ident, safe=",")
 
 
+def _extract_concept_structures(payload: dict[str, Any]) -> dict[dict[str, Any]]:
+    concepts: dict[dict[str, Any]] = {}
+    for root_key in ("structure", "data"):
+        root = payload.get(root_key)
+        if not isinstance(root, dict):
+            continue
+        cs_container = root.get("conceptSchemes")
+        for concept_scheme in cs_container:
+            concept_list = concept_scheme.get("concepts")
+            concepts.update({f'{concept_scheme.get("agencyID")}:{concept_scheme.get("id")}({concept_scheme.get("version")}).{c.get("id")}': c for c in concept_list})
+    return concepts
+
+
 def _extract_data_structures(payload: dict[str, Any]) -> list[dict[str, Any]]:
     structures: list[dict[str, Any]] = []
     for root_key in ("structure", "data"):
@@ -649,6 +652,7 @@ def _codelist_map(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _dimension_metadata(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    concept_scheme = _extract_concept_structures(payload)
     for ds in _extract_data_structures(payload):
         components = ds.get("dataStructureComponents")
         if not isinstance(components, dict):
@@ -657,6 +661,8 @@ def _dimension_metadata(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(dim_list, dict):
             continue
         dims = dim_list.get("dimensions") or dim_list.get("dimension")
+        if "timeDimensions" in dim_list:
+            dims = dims + dim_list.get("timeDimensions")
         dim_items: list[dict[str, Any]] = []
         if isinstance(dims, list):
             dim_items = [item for item in dims if isinstance(item, dict)]
@@ -677,6 +683,7 @@ def _dimension_metadata(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 concept_id = concept
             else:
                 concept_id = None
+            concept_key = concept_id.split("=")[1]
             local_rep = dim.get("localRepresentation") or {}
             if isinstance(local_rep, dict):
                 enumeration = local_rep.get("enumeration") or {}
@@ -694,6 +701,7 @@ def _dimension_metadata(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 {
                     "id": dim_id.upper(),
                     "conceptID": concept_id,
+                    "concept": concept_scheme.get(concept_key),
                     "name": _coerce_text(dim.get("name")) or _coerce_text(dim.get("names")),
                     "position": dim.get("position"),
                     "codelist": codelist_ref,
@@ -1339,7 +1347,7 @@ async def query_data(
     format: str = DATA_FORMAT,
     labels: Optional[str] = None,
     maxObs: int = 50_000,
-    filters: dict[str, str] | None = None,
+    filters: dict[str, Any] | None = None,
     lastNObservations: Optional[int] = None,
 ) -> dict[str, Any]:
     """
