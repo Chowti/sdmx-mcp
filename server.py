@@ -20,10 +20,9 @@ DEFAULT_BASE = "https://sdmx.data.unicef.org/ws/public/sdmxapi/rest"
 BASE = os.getenv("SDMX_BASE_URL", DEFAULT_BASE).strip().rstrip("/")
 MCP_NAME = os.getenv("SDMX_MCP_NAME", "sdmx-mcp").strip() or "sdmx-mcp"
 USER_AGENT = os.getenv("SDMX_USER_AGENT", "sdmx-mcp/0.1").strip() or "sdmx-mcp/0.1"
-TIMEOUT = os.getenv("TIMEOUT",30.0)
-JSON_HEADER = os.getenv("JSON_HEADER")
-DATA_FORMAT = os.get("DATA_FORMAT","sdmx-json")
-
+TIMEOUT = float(os.getenv("TIMEOUT",30.0))
+JSON_HEADER = {"data": os.getenv("JSON_DATA_HEADER"), "structure": os.getenv("JSON_STRUCTURE_HEADER")}
+DATA_FORMAT = os.getenv("DATA_FORMAT","sdmx-json")
 
 def _env_bool(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
@@ -94,14 +93,25 @@ def _theme_prefix_csv_path() -> Path:
     return Path(__file__).resolve().parent / path
 
 
+# async def _get_json(url: str) -> dict[str, Any]:
+#     async with httpx.AsyncClient(timeout=60.0) as client:
+#         if '/data/' in url:
+#             json_header = "application/vnd.sdmx.data+json;"
+#         else:
+#             json_header = "application/vnd.sdmx.structure+json;"
+#         r = await client.get(url, headers={"User-Agent": USER_AGENT, "Accept": json_header})
+#         r.raise_for_status()
+#         return r.json()
+
 async def _get_json(url: str) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        if JSON_HEADER is None:
-            headers = {"User-Agent": USER_AGENT}
-        elif "/data/" in url:
-            headers = {"User-Agent": USER_AGENT, "Accept": JSON_HEADER.get("data")}
+        headers = {"User-Agent": USER_AGENT}
+        if "/data/" in url:
+            if JSON_HEADER.get("data") is not None:
+                headers["Accept"] = JSON_HEADER.get("data")
         else:
-            headers = {"User-Agent": USER_AGENT, "Accept": JSON_HEADER.get("structure")}
+            if JSON_HEADER.get("structure") is not None:
+                headers["Accept"] = JSON_HEADER.get("structure")
         r = await client.get(url, headers=headers)
         r.raise_for_status()
         return r.json()
@@ -1329,7 +1339,7 @@ async def query_data(
     format: str = DATA_FORMAT,
     labels: Optional[str] = None,
     maxObs: int = 50_000,
-    filters: dict[str, Any] | None = None,
+    filters: dict[str, str] | None = None,
     lastNObservations: Optional[int] = None,
 ) -> dict[str, Any]:
     """
@@ -1361,8 +1371,8 @@ async def query_data(
     if lastNObservations is not None:
         params.append(f"lastNObservations={int(lastNObservations)}")
     params.append(f"format={quote(format)}")
-    if labels:
-        params.append(f"labels={quote(labels)}")
+    #if labels:
+    #    params.append(f"labels={quote(labels)}")
     url = f"{BASE}/data/{flow_path}/{quote(key, safe='+.')}?{'&'.join(params)}"
 
     if "csv" in format.lower():
