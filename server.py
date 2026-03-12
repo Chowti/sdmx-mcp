@@ -20,6 +20,9 @@ DEFAULT_BASE = "https://sdmx.data.unicef.org/ws/public/sdmxapi/rest"
 BASE = os.getenv("SDMX_BASE_URL", DEFAULT_BASE).strip().rstrip("/")
 MCP_NAME = os.getenv("SDMX_MCP_NAME", "sdmx-mcp").strip() or "sdmx-mcp"
 USER_AGENT = os.getenv("SDMX_USER_AGENT", "sdmx-mcp/0.1").strip() or "sdmx-mcp/0.1"
+TIMEOUT = os.getenv("TIMEOUT",30.0)
+JSON_HEADER = os.getenv("JSON_HEADER")
+DATA_FORMAT = os.get("DATA_FORMAT","sdmx-json")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -92,14 +95,20 @@ def _theme_prefix_csv_path() -> Path:
 
 
 async def _get_json(url: str) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.get(url, headers={"User-Agent": USER_AGENT})
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        if JSON_HEADER is None:
+            headers = {"User-Agent": USER_AGENT}
+        elif "/data/" in url:
+            headers = {"User-Agent": USER_AGENT, "Accept": JSON_HEADER.get("data")}
+        else:
+            headers = {"User-Agent": USER_AGENT, "Accept": JSON_HEADER.get("structure")}
+        r = await client.get(url, headers=headers)
         r.raise_for_status()
         return r.json()
 
 
 async def _get_text_with_status(url: str) -> tuple[int, str]:
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         r = await client.get(url, headers={"User-Agent": USER_AGENT})
         return r.status_code, r.text
 
@@ -1317,7 +1326,7 @@ async def query_data(
     key: Optional[str] = None,
     startPeriod: Optional[str] = None,
     endPeriod: Optional[str] = None,
-    format: str = "sdmx-json",
+    format: str = DATA_FORMAT,
     labels: Optional[str] = None,
     maxObs: int = 50_000,
     filters: dict[str, Any] | None = None,
@@ -1356,7 +1365,7 @@ async def query_data(
         params.append(f"labels={quote(labels)}")
     url = f"{BASE}/data/{flow_path}/{quote(key, safe='+.')}?{'&'.join(params)}"
 
-    if format.lower() == "csv":
+    if "csv" in format.lower():
         status, text = await _get_text_with_status(url)
         if status >= 400:
             return {
